@@ -20,6 +20,20 @@ import { resolveEdDeposit } from '../resolveEdDeposit'
 import { createExecuteCall } from './createExecuteCall'
 import { createDirectExecuteXcm } from './createExecuteXcm'
 
+const DRY_RUN_UNAVAILABLE_PREFIX = 'DryRunApi is not available on chain'
+
+const isDryRunUnavailable = (result?: TDryRunChainResult): boolean =>
+  Boolean(
+    result &&
+      !result.success &&
+      result.dryRunError?.reason?.startsWith(DRY_RUN_UNAVAILABLE_PREFIX)
+  )
+
+const isGenuineDryRunFailure = (
+  result?: TDryRunChainResult
+): result is Extract<TDryRunChainResult, { success: false }> =>
+  Boolean(result && !result.success && !isDryRunUnavailable(result))
+
 const getFeeFromResult = (result?: TDryRunChainResult): bigint =>
   result?.success ? result.fee : MIN_FEE
 
@@ -133,6 +147,24 @@ export const handleExecuteTransfer = async <
       ...dryRunResult.origin.dryRunError,
       chainKind: 'origin',
       chain
+    })
+  }
+
+  for (const hop of dryRunResult.hops) {
+    if (isGenuineDryRunFailure(hop.result)) {
+      throw new DryRunFailedError({
+        ...hop.result.dryRunError,
+        chainKind: 'hop',
+        chain: hop.chain
+      })
+    }
+  }
+
+  if (isGenuineDryRunFailure(dryRunResult.destination)) {
+    throw new DryRunFailedError({
+      ...dryRunResult.destination.dryRunError,
+      chainKind: 'destination',
+      chain: destChain
     })
   }
 

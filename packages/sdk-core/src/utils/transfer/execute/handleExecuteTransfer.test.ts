@@ -7,7 +7,7 @@ import type { PolkadotApi } from '../../../api'
 import { getAssetBalanceInternal } from '../../../balance'
 import { getTChain } from '../../../chains/getTChain'
 import { MAX_WEIGHT } from '../../../constants'
-import { AmountTooLowError } from '../../../errors'
+import { AmountTooLowError, DryRunFailedError } from '../../../errors'
 import { dryRunInternal } from '../../../transfer'
 import type {
   TDryRunResult,
@@ -379,7 +379,7 @@ describe('handleExecuteTransfer', () => {
     })
   })
 
-  it('should fall back to MIN_FEE for reserve and destination fees when their dry runs fail', async () => {
+  it('should fall back to MIN_FEE for reserve and destination fees when DryRunApi is unavailable on their chains', async () => {
     const input = {
       ...mockInput,
       sender: '0xvalid',
@@ -393,8 +393,19 @@ describe('handleExecuteTransfer', () => {
 
     const dryRunResult = {
       origin: { success: true, fee: 1000n },
-      hops: [{ chain: 'IntermediateChain', result: { success: false } }],
-      destination: { success: false }
+      hops: [
+        {
+          chain: 'Centrifuge',
+          result: {
+            success: false,
+            dryRunError: { reason: 'DryRunApi is not available on chain Centrifuge' }
+          }
+        }
+      ],
+      destination: {
+        success: false,
+        dryRunError: { reason: 'DryRunApi is not available on chain Pendulum' }
+      }
     } as unknown as TDryRunResult
     vi.mocked(dryRunInternal).mockResolvedValue(dryRunResult)
 
@@ -406,5 +417,51 @@ describe('handleExecuteTransfer', () => {
         fees: { originFee: 1400n, reserveFee: 1400n, destFee: 1400n }
       })
     )
+  })
+
+  it('should throw DryRunFailedError when a hop dry run fails with a genuine error', async () => {
+    const input = {
+      ...mockInput,
+      sender: '0xvalid',
+      assetInfo: { ...mockInput.assetInfo, amount: 10000n }
+    }
+
+    vi.mocked(createDirectExecuteXcm).mockResolvedValue(mockXcm)
+    vi.mocked(createExecuteCall).mockReturnValue('mockCall' as unknown as TSerializedExtrinsics)
+    vi.spyOn(mockApi, 'deserializeExtrinsics').mockReturnValue('mockTx')
+
+    const dryRunResult = {
+      origin: { success: true, fee: 1000n },
+      hops: [
+        {
+          chain: 'AssetHubPolkadot',
+          result: { success: false, dryRunError: { reason: 'Barrier' } }
+        }
+      ]
+    } as unknown as TDryRunResult
+    vi.mocked(dryRunInternal).mockResolvedValue(dryRunResult)
+
+    await expect(handleExecuteTransfer(input)).rejects.toThrow(DryRunFailedError)
+  })
+
+  it('should throw DryRunFailedError when destination dry run fails with a genuine error', async () => {
+    const input = {
+      ...mockInput,
+      sender: '0xvalid',
+      assetInfo: { ...mockInput.assetInfo, amount: 10000n }
+    }
+
+    vi.mocked(createDirectExecuteXcm).mockResolvedValue(mockXcm)
+    vi.mocked(createExecuteCall).mockReturnValue('mockCall' as unknown as TSerializedExtrinsics)
+    vi.spyOn(mockApi, 'deserializeExtrinsics').mockReturnValue('mockTx')
+
+    const dryRunResult = {
+      origin: { success: true, fee: 1000n },
+      hops: [],
+      destination: { success: false, dryRunError: { reason: 'TooExpensive' } }
+    } as unknown as TDryRunResult
+    vi.mocked(dryRunInternal).mockResolvedValue(dryRunResult)
+
+    await expect(handleExecuteTransfer(input)).rejects.toThrow(DryRunFailedError)
   })
 })

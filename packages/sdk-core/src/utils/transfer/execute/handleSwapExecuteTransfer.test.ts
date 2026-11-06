@@ -376,4 +376,73 @@ describe('handleSwapExecuteTransfer', () => {
       expect(options.calculateMinAmountOut).toHaveBeenCalledWith(1680n)
     })
   })
+
+  describe('hop and destination dry-run failure handling (#2437)', () => {
+    it.each(['NoDeal', 'Barrier', 'TooExpensive'])(
+      'throws DryRunFailedError when exchange hop fails with %s while origin succeeds',
+      async reason => {
+        const failedExchangeHop = {
+          origin: { success: true, fee: 500n },
+          hops: [
+            { chain: ORIGIN_CHAIN, result: { success: true, fee: 100n } },
+            {
+              chain: EXCHANGE_CHAIN,
+              result: { success: false, dryRunError: { reason } }
+            },
+            { chain: DEST_CHAIN, result: { success: true, fee: 150n } }
+          ]
+        } as unknown as TDryRunResult
+
+        vi.spyOn(dryRunModule, 'dryRunInternal').mockResolvedValueOnce(failedExchangeHop)
+
+        await expect(handleSwapExecuteTransfer(baseOptions)).rejects.toThrow(DryRunFailedError)
+      }
+    )
+
+    it.each(['Barrier', 'TooExpensive'])(
+      'throws DryRunFailedError when destination fails with %s while origin and hops succeed',
+      async reason => {
+        const failedDest = {
+          ...mockDryRunResult(true, true),
+          destination: { success: false, dryRunError: { reason } }
+        } as unknown as TDryRunResult
+
+        vi.spyOn(dryRunModule, 'dryRunInternal').mockResolvedValueOnce(failedDest)
+
+        await expect(handleSwapExecuteTransfer(baseOptions)).rejects.toThrow(DryRunFailedError)
+      }
+    )
+
+    it('throws DryRunFailedError when destChain equals exchangeChain and destination dry run fails', async () => {
+      const failedExchangeAsDest = {
+        origin: { success: true, fee: 500n },
+        destination: { success: false, dryRunError: { reason: 'NoDeal' } },
+        hops: []
+      } as unknown as TDryRunResult
+
+      vi.spyOn(dryRunModule, 'dryRunInternal').mockResolvedValueOnce(failedExchangeAsDest)
+
+      await expect(
+        handleSwapExecuteTransfer({ ...baseOptions, destChain: EXCHANGE_CHAIN })
+      ).rejects.toThrow(DryRunFailedError)
+    })
+
+    it('exempts chains where DryRunApi is not available and resolves with fallback fees', async () => {
+      const exemptDest = {
+        ...mockDryRunResult(true, true),
+        destination: {
+          success: false,
+          dryRunError: { reason: 'DryRunApi is not available on chain Centrifuge' }
+        }
+      } as unknown as TDryRunResult
+
+      vi.spyOn(dryRunModule, 'dryRunInternal').mockResolvedValueOnce(exemptDest)
+
+      const result = await handleSwapExecuteTransfer({
+        ...baseOptions,
+        destChain: 'Centrifuge'
+      })
+      expect(result).toMatch(/^tx:/)
+    })
+  })
 })

@@ -1066,7 +1066,7 @@ export class GeneralBuilder<
       return txHashes[0]
     }
 
-    const { tx } = await this.buildInternal()
+    const { tx } = await this.buildCommon()
     return this.api.signAndSubmit(tx, senderSource)
   }
 
@@ -1101,7 +1101,7 @@ export class GeneralBuilder<
       )
     }
 
-    const { tx } = await this.buildInternal()
+    const { tx } = await this.buildCommon()
     const txHash = await this.api.signAndSubmit(tx, senderSource)
     return [txHash]
   }
